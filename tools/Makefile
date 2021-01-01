@@ -4,7 +4,7 @@ PYTHON :=
 # The python version installed in the conda setup
 PYTHON_VERSION := 3.7
 CUDA_VERSION := 10.2
-PYTORCH_VERSION := 1.7.1
+PYTORCH_VERSION := 1.6.0
 # Use a prebuild Kaldi to omit the installation
 KALDI :=
 
@@ -19,7 +19,7 @@ CUDA_DEPS := cupy.done
 # Path to save tools (default: current directory)
 TOOL :=
 ifeq ($(strip $(TOOL)),)
-	TOOL := $(PWD)/neural_sp
+	TOOL := $(PWD)/
 endif
 CONDA=$(TOOL)/miniconda
 
