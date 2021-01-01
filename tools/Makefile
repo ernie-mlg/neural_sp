@@ -3,8 +3,8 @@
 PYTHON :=
 # The python version installed in the conda setup
 PYTHON_VERSION := 3.7
-CUDA_VERSION := 10.1
-PYTORCH_VERSION := 1.0.0
+CUDA_VERSION := 10.2
+PYTORCH_VERSION := 1.7.1
 # Use a prebuild Kaldi to omit the installation
 KALDI :=
 

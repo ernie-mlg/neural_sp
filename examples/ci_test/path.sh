@@ -16,8 +16,8 @@ export PYTHONDONTWRITEBYTECODE=1
 export OMP_NUM_THREADS=1
 
 ### CUDA
-CUDAROOT=/usr/local/cuda
-NCCL_ROOT=/usr/local/nccl
+CUDAROOT=/home/yyu/Programs/cudas/
+NCCL_ROOT=/home/yyu/Programs/nccl_2.8.3-1+cuda10.2_x86_64/
 export CPATH=$NCCL_ROOT/include:$CPATH
 export LD_LIBRARY_PATH=$NCCL_ROOT/lib/:$CUDAROOT/lib64:$LD_LIBRARY_PATH
 export LIBRARY_PATH=$NCCL_ROOT/lib/:$LIBRARY_PATH
