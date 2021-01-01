@@ -9,7 +9,7 @@ echo ===========================================================================
 
 stage=0
 stop_stage=5
-gpu=
+gpu=2
 benchmark=true
 speed_perturb=false
 stdout=false
