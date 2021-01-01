@@ -26,7 +26,7 @@ CONDA=$(TOOL)/miniconda
 .PHONY: all clean
 
 all: miniconda.done kaldi.done python
-python: neural_sp.done warp-ctc.done warp-transducer.done sentencepiece.done
+python: neural_sp.done warp-transducer.done sentencepiece.done
 extra: warp_rnnt.done nkf.done moses.done mwerSegmenter.done
 
 # miniconda
