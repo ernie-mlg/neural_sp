@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Copyright 2018 Kyoto University (Hirofumi Inaguma)
+# Copyright 2020 Kyoto University (Hirofumi Inaguma)
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
 
 model=
@@ -9,7 +9,7 @@ stdout=false
 n_threads=1
 
 ### path to save preproecssed data
-data=/n/work2/inaguma/corpus/timit
+data=./data
 
 batch_size=1
 
@@ -29,13 +29,14 @@ else
     n_gpus=$(echo ${gpu} | tr "," "\n" | wc -l)
 fi
 
-for set in dev test; do
+for set in train; do
     recog_dir=$(dirname ${model})/plot_${set}
     mkdir -p ${recog_dir}
 
-    CUDA_VISIBLE_DEVICES=${gpu} ${NEURALSP_ROOT}/neural_sp/bin/asr/plot_ctc.py \
+
+    CUDA_VISIBLE_DEVICES=${gpu} coverage run -a ${NEURALSP_ROOT}/neural_sp/bin/asr/plot_ctc.py \
         --recog_n_gpus ${n_gpus} \
-        --recog_sets ${data}/dataset/${set}.csv \
+        --recog_sets ${data}/dataset/${set}_char.tsv \
         --recog_dir ${recog_dir} \
         --recog_model ${model} \
         --recog_batch_size ${batch_size} \
