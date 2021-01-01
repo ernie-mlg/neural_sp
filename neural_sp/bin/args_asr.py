@@ -25,16 +25,24 @@ DECODER_TYPES = ['lstm', 'gru', 'transformer',
 
 def parse_args_train(input_args):
     parser = build_parser()
+    parser.add_argument("-f", "--fff", help="a dummy argument to fool ipython", default="1")
+    print(input_args)
     user_args, _ = parser.parse_known_args(input_args)
-
+    print("point 1")
+    print(user_args)
     # register module specific arguments
     parser = register_args_encoder(parser, user_args)
     user_args, _ = parser.parse_known_args(input_args)  # to avoid args conflict
+    print("point 2")
+    print(user_args)
+    
     parser = register_args_decoder(parser, user_args, user_args.dec_type)
     if user_args.dec_n_layers_sub1 > 0 and user_args.dec_type != user_args.dec_type_sub1:
         user_args, _ = parser.parse_known_args(input_args)  # to avoid args conflict
         parser = register_args_decoder(parser, user_args, user_args.dec_type_sub1)
     user_args = parser.parse_args()
+    print("point 3")
+    print(user_args)
     return user_args
 
 
