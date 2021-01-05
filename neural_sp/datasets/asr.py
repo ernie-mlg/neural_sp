@@ -32,6 +32,8 @@ from neural_sp.datasets.utils import discourse_bucketing
 from neural_sp.datasets.utils import set_batch_size
 from neural_sp.datasets.utils import shuffle_bucketing
 
+from lhotse import CutSet
+
 random.seed(1)
 np.random.seed(1)
 
@@ -40,8 +42,7 @@ def build_dataloader(args, tsv_path, batch_size, n_epochs=1e10, is_test=False,
                      sort_by='utt_id', short2long=False, sort_stop_epoch=1e10,
                      tsv_path_sub1=False, tsv_path_sub2=False,
                      num_workers=1, pin_memory=False,
-                     first_n_utterances=-1, word_alignment_dir=None, ctc_alignment_dir=None):
-
+                     first_n_utterances=-1, word_alignment_dir=None, ctc_alignment_dir=None, cutset_yaml=""):
     dataset = CustomDataset(corpus=args.corpus,
                             tsv_path=tsv_path,
                             tsv_path_sub1=tsv_path_sub1,
@@ -68,7 +69,8 @@ def build_dataloader(args, tsv_path, batch_size, n_epochs=1e10, is_test=False,
                             short2long=short2long,
                             is_test=is_test,
                             word_alignment_dir=word_alignment_dir,
-                            ctc_alignment_dir=ctc_alignment_dir)
+                            ctc_alignment_dir=ctc_alignment_dir,
+                            lhotse=args.lhotse, cutset_yaml=cutset_yaml)
 
     batch_sampler = CustomBatchSampler(df=dataset.df,  # filtered
                                        df_sub1=dataset.df_sub1,  # filtered
@@ -201,7 +203,7 @@ class CustomDataset(Dataset):
                  unit_sub1, unit_sub2,
                  wp_model_sub1, wp_model_sub2,
                  discourse_aware=False, first_n_utterances=-1,
-                 word_alignment_dir=None, ctc_alignment_dir=None):
+                 word_alignment_dir=None, ctc_alignment_dir=None, lhotse=False, cutset_yaml=""):
         """Custom Dataset class.
 
         Args:
@@ -243,6 +245,9 @@ class CustomDataset(Dataset):
         self.sort_by = sort_by
         # if shuffle_bucket:
         #     assert sort_by in ['input', 'output']
+        if lhotse:
+            assert cutset_yaml != ""
+            self.cutset = CutSet.from_yaml(cutset_yaml)
         if discourse_aware:
             assert not is_test
 
@@ -295,16 +300,16 @@ class CustomDataset(Dataset):
         # Load dataset tsv file
         df = pd.read_csv(tsv_path, encoding='utf-8', delimiter='\t')
         df = df.loc[:, ['utt_id', 'speaker', 'feat_path',
-                        'xlen', 'xdim', 'text', 'token_id', 'ylen', 'ydim']]
+                        'xlen', 'xdim', 'text', 'token_id', 'ylen', 'ydim', 'cut_id']]
         for i in range(1, 3):
             if locals()['tsv_path_sub' + str(i)]:
                 df_sub = pd.read_csv(locals()['tsv_path_sub' + str(i)], encoding='utf-8', delimiter='\t')
                 df_sub = df_sub.loc[:, ['utt_id', 'speaker', 'feat_path',
-                                        'xlen', 'xdim', 'text', 'token_id', 'ylen', 'ydim']]
+                                        'xlen', 'xdim', 'text', 'token_id', 'ylen', 'ydim', 'cut_id']]
                 setattr(self, 'df_sub' + str(i), df_sub)
             else:
                 setattr(self, 'df_sub' + str(i), None)
-        self._input_dim = kaldiio.load_mat(df['feat_path'][0]).shape[-1]
+        self._input_dim = df['xdim'][0]
 
         # Remove inappropriate utterances
         print('Original utterance num: %d' % len(df))
@@ -448,7 +453,10 @@ class CustomDataset(Dataset):
 
         """
         # inputs
-        xs = [kaldiio.load_mat(self.df['feat_path'][i]) for i in indices]
+        if cutset:
+            xs = [self.cutset[self.df['cut_id'][i]].load_features() for i in indices]
+        else:
+            xs = [kaldiio.load_mat(self.df['feat_path'][i]) for i in indices]
         xlens = [self.df['xlen'][i] for i in indices]
         utt_ids = [self.df['utt_id'][i] for i in indices]
         speakers = [self.df['speaker'][i] for i in indices]

@@ -32,7 +32,7 @@ sed -e 's?.*/??' -e 's?.wav??' -e 's?\-[R,L]??' $dir/wav.flist | paste - $dir/wa
   > $dir/wavflist.scp
 
 awk '{
- printf("%s cat %s |\n", $1, $2);
+ printf("%s %s \n", $1, $2);
 }' < $dir/wavflist.scp | sort > $dir/wav.scp || exit 1;
 
 

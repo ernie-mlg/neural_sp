@@ -85,7 +85,8 @@ def main():
                                  num_workers=args.n_gpus,
                                  pin_memory=True,
                                  word_alignment_dir=args.train_word_alignment,
-                                 ctc_alignment_dir=args.train_ctc_alignment)
+                                 ctc_alignment_dir=args.train_ctc_alignment,
+                                 cutset_yaml=args.train_cutset)
     dev_set = build_dataloader(args=args,
                                tsv_path=args.dev_set,
                                tsv_path_sub1=args.dev_set_sub1,
@@ -94,11 +95,16 @@ def main():
                                num_workers=args.n_gpus,
                                pin_memory=True,
                                word_alignment_dir=args.dev_word_alignment,
-                               ctc_alignment_dir=args.dev_ctc_alignment)
-    eval_sets = [build_dataloader(args=args,
+                               ctc_alignment_dir=args.dev_ctc_alignment,
+                               cutset_yaml=args.dev_cutset)
+    eval_sets = []
+    for s in args.eval_sets:
+        index_ = args.eval_sets.index(s)
+        eval_sets.append(build_dataloader(args=args,
                                   tsv_path=s,
                                   batch_size=1,
-                                  is_test=True) for s in args.eval_sets]
+                                  is_test=True,
+                                  cutset_yaml=args.eval_cutsets[index_]))
 
     args.vocab = train_set.vocab
     args.vocab_sub1 = train_set.vocab_sub1
