@@ -201,6 +201,9 @@ def build_parser():
                         help='standard deviation of Gaussian noise to weight parameters')
     parser.add_argument('--sequence_summary_network', type=strtobool, default=False,
                         help='use sequence summary network')
+    parser.add_argument('--storage_type', type=str, default="Lilcom",
+                    choices=['Lilcom', 'Numpy'],
+                    help='feature storage storge')
     # topology (encoder)
     parser.add_argument('--enc_type', type=str, default='blstm',
                         choices=ENCODER_TYPES,

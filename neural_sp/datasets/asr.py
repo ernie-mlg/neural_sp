@@ -227,6 +227,8 @@ class CustomDataset(Dataset):
             first_n_utterances (int): evaluate the first N utterances
             word_alignment_dir (str): path to word alignment directory
             ctc_alignment_dir (str): path to CTC alignment directory
+            lhotse(bool) : lhotse support 
+            storage_type(str) : lhotse storage type
 
         """
         super(Dataset, self).__init__()
@@ -240,6 +242,8 @@ class CustomDataset(Dataset):
         self._unit = unit
         self._unit_sub1 = unit_sub1
         self._unit_sub2 = unit_sub2
+        self._lhotse = lhotse
+        self._storage_type = storage_type
 
         self.is_test = is_test
         self.sort_by = sort_by
@@ -296,16 +300,20 @@ class CustomDataset(Dataset):
                         raise ValueError(unit_sub)
             else:
                 setattr(self, '_vocab_sub' + str(i), -1)
-
+        
         # Load dataset tsv file
+        if self._lhotse:
+            titile_list = ['utt_id', 'speaker', 'feat_path', 'xlen', 'xdim', 
+                           'text', 'token_id', 'ylen', 'ydim', 'offset']
+        else:
+            titile_list = ['utt_id', 'speaker', 'feat_path', 'xlen', 'xdim', 
+                           'text', 'token_id', 'ylen', 'ydim']        
         df = pd.read_csv(tsv_path, encoding='utf-8', delimiter='\t')
-        df = df.loc[:, ['utt_id', 'speaker', 'feat_path',
-                        'xlen', 'xdim', 'text', 'token_id', 'ylen', 'ydim', 'cut_id']]
+        df = df.loc[:, titile_list]
         for i in range(1, 3):
             if locals()['tsv_path_sub' + str(i)]:
                 df_sub = pd.read_csv(locals()['tsv_path_sub' + str(i)], encoding='utf-8', delimiter='\t')
-                df_sub = df_sub.loc[:, ['utt_id', 'speaker', 'feat_path',
-                                        'xlen', 'xdim', 'text', 'token_id', 'ylen', 'ydim', 'cut_id']]
+                df_sub = df_sub.loc[:, titile_list]
                 setattr(self, 'df_sub' + str(i), df_sub)
             else:
                 setattr(self, 'df_sub' + str(i), None)
@@ -453,8 +461,19 @@ class CustomDataset(Dataset):
 
         """
         # inputs
-        if cutset:
-            xs = [self.cutset[self.df['cut_id'][i]].load_features() for i in indices]
+        if self._lhotse:
+            if self._storage_type == "Lilcom":
+                from lhotse import LilcomFilesReader as FilesReader
+            elif self._storage_type == "Numpy":
+                from lhotse import NumpyFilesReader as FilesReader
+        
+            xs = []
+            for i in indices:
+                storage_path, storage_key = self.df['feat_path'][i].split("@")
+                left_offset_frames = self.df['offset'][i]
+                right_offset_frames = left_offset_frames + self.df['xlen'][i]
+                FeatureFiles = FilesReader(storage_path)
+                xs.append(FeatureFiles.read(storage_key, left_offset_frames, right_offset_frames))
         else:
             xs = [kaldiio.load_mat(self.df['feat_path'][i]) for i in indices]
         xlens = [self.df['xlen'][i] for i in indices]

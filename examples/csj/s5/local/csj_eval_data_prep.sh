@@ -11,14 +11,17 @@
 
 # The input is directory containing the official evaluation test set and transcripts.
 
-if [ $# -ne 2 ]; then
-  echo "Usage: "`basename $0`" <transcription-dir> <eval_num>"
+if [ $# -ne 3 ]; then
+  echo "Usage: "`basename $0`" <transcription-dir> <data_dir> <eval_num>"
   echo "See comments in the script for more details"
   exit 1
 fi
 
 tdir=$1
-eval_num=$2
+data=$2
+eval_num=$3
+
+
 . ./path.sh
 
 dir=${data}/local/$eval_num

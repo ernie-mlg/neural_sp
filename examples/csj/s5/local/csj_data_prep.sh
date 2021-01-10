@@ -20,8 +20,8 @@
 set -e # exit on error
 
 #check existing directories
-if [ $# -ne 1 ] && [ $# -ne 2 ]; then
-  echo "Usage: csj_data_prep.sh <csj-data dir> [<mode_number>]"
+if [ $# -ne 2 ] && [ $# -ne 3 ]; then
+  echo "Usage: csj_data_prep.sh <csj-data dir> <data-dir> [<mode_number>]"
   echo " mode_number can be aps_other, aps, all_except_dialog, all, "
   echo "(aps_other=default using academic lecture and other data, "
   echo " aps=using academic lecture data, "
@@ -32,7 +32,9 @@ if [ $# -ne 1 ] && [ $# -ne 2 ]; then
 fi
 
 CSJ=$1
-mode=$2
+data=$2
+mode=$3
+
 
 dir=${data}/local/train_${mode}
 mkdir -p $dir
