@@ -103,8 +103,8 @@ def main():
         eval_sets.append(build_dataloader(args=args,
                                   tsv_path=s,
                                   batch_size=1,
-                                  is_test=True,
-                                  cutset_yaml=args.eval_cutsets[index_]))
+                                  cutset_yaml=args.eval_cutsets[index_],
+                                  is_test=True))
 
     args.vocab = train_set.vocab
     args.vocab_sub1 = train_set.vocab_sub1

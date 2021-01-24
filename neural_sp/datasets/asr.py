@@ -31,18 +31,17 @@ from neural_sp.datasets.utils import count_vocab_size
 from neural_sp.datasets.utils import discourse_bucketing
 from neural_sp.datasets.utils import set_batch_size
 from neural_sp.datasets.utils import shuffle_bucketing
-
-from lhotse import CutSet
-
 random.seed(1)
 np.random.seed(1)
 
+from lhotse import CutSet
 
 def build_dataloader(args, tsv_path, batch_size, n_epochs=1e10, is_test=False,
                      sort_by='utt_id', short2long=False, sort_stop_epoch=1e10,
                      tsv_path_sub1=False, tsv_path_sub2=False,
                      num_workers=1, pin_memory=False,
                      first_n_utterances=-1, word_alignment_dir=None, ctc_alignment_dir=None, cutset_yaml=""):
+
     dataset = CustomDataset(corpus=args.corpus,
                             tsv_path=tsv_path,
                             tsv_path_sub1=tsv_path_sub1,
@@ -70,7 +69,9 @@ def build_dataloader(args, tsv_path, batch_size, n_epochs=1e10, is_test=False,
                             is_test=is_test,
                             word_alignment_dir=word_alignment_dir,
                             ctc_alignment_dir=ctc_alignment_dir,
-                            lhotse=args.lhotse, cutset_yaml=cutset_yaml)
+                            lhotse=args.lhotse,
+                            storage_type=args.storage_type,
+                            cutset_yaml=cutset_yaml)
 
     batch_sampler = CustomBatchSampler(df=dataset.df,  # filtered
                                        df_sub1=dataset.df_sub1,  # filtered
@@ -203,7 +204,7 @@ class CustomDataset(Dataset):
                  unit_sub1, unit_sub2,
                  wp_model_sub1, wp_model_sub2,
                  discourse_aware=False, first_n_utterances=-1,
-                 word_alignment_dir=None, ctc_alignment_dir=None, lhotse=False, cutset_yaml=""):
+                 word_alignment_dir=None, ctc_alignment_dir=None, lhotse=False, storage_type=None, cutset_yaml=""):
         """Custom Dataset class.
 
         Args:
@@ -244,14 +245,15 @@ class CustomDataset(Dataset):
         self._unit_sub2 = unit_sub2
         self._lhotse = lhotse
         self._storage_type = storage_type
+        if lhotse and cutset_yaml != "":
+            self._cutset = CutSet.from_yaml(cutset_yaml)
+        else:
+            self._cutset = ""
 
         self.is_test = is_test
         self.sort_by = sort_by
         # if shuffle_bucket:
         #     assert sort_by in ['input', 'output']
-        if lhotse:
-            assert cutset_yaml != ""
-            self.cutset = CutSet.from_yaml(cutset_yaml)
         if discourse_aware:
             assert not is_test
 
@@ -304,7 +306,7 @@ class CustomDataset(Dataset):
         # Load dataset tsv file
         if self._lhotse:
             titile_list = ['utt_id', 'speaker', 'feat_path', 'xlen', 'xdim', 
-                           'text', 'token_id', 'ylen', 'ydim', 'offset']
+                           'text', 'token_id', 'ylen', 'ydim', 'offset', 'cut_id']
         else:
             titile_list = ['utt_id', 'speaker', 'feat_path', 'xlen', 'xdim', 
                            'text', 'token_id', 'ylen', 'ydim']        
@@ -461,12 +463,13 @@ class CustomDataset(Dataset):
 
         """
         # inputs
-        if self._lhotse:
+        if self._cutset != "":
+            xs = [self._cutset[self.df['cut_id'][i]].load_features() for i in indices]            
+        elif self._lhotse:
             if self._storage_type == "Lilcom":
                 from lhotse import LilcomFilesReader as FilesReader
             elif self._storage_type == "Numpy":
                 from lhotse import NumpyFilesReader as FilesReader
-        
             xs = []
             for i in indices:
                 storage_path, storage_key = self.df['feat_path'][i].split("@")

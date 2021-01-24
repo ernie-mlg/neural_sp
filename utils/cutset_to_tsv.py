@@ -82,7 +82,7 @@ def main():
         sp.Load(args.wp_model + '.model')
         
 
-    print_lines = ['utt_id\tspeaker\tfeat_path\txlen\txdim\ttext\ttoken_id\tylen\tydim\toffset\tprev_utt']
+    print_lines = ['utt_id\tspeaker\tfeat_path\txlen\txdim\ttext\ttoken_id\tylen\tydim\toffset\tcut_id\tprev_utt']
     
     futures = [
         ex.submit(
@@ -193,7 +193,7 @@ def Cut2Tsv(cut, token2idx, idx2token, nlsyms, sp, args):
     ylen = len(token_ids)
     ydim = len(token2idx.keys())
 
-    print_line = '%s\t%s\t%s\t%d\t%d\t%s\t%s\t%d\t%d\t%d'%(utt_id, speaker, feat_path, xlen, xdim, text, token_id, ylen, ydim, left_offset_frames)
+    print_line = '%s\t%s\t%s\t%d\t%d\t%s\t%s\t%d\t%d\t%d\t%s'%(utt_id, speaker, feat_path, xlen, xdim, text, token_id, ylen, ydim, left_offset_frames,cut_id)
 
     # data augmentation for wordpiece
     if args.unit == 'wp' and args.wp_nbest > 1:
@@ -209,7 +209,7 @@ def Cut2Tsv(cut, token2idx, idx2token, nlsyms, sp, args):
             token_id = ' '.join(token_ids)
             ylen = len(token_ids)
 
-            print_line = '%s\t%s\t%s\t%d\t%d\t%s\t%s\t%d\t%d\t%d\t%d'%(utt_id, speaker, feat_path, xlen, xdim, text, token_id, ylen, ydim, left_offset_frames, right_offset_frames)
+            print_line = '%s\t%s\t%s\t%d\t%d\t%s\t%s\t%d\t%d\t%d\t%d\t%s'%(utt_id, speaker, feat_path, xlen, xdim, text, token_id, ylen, ydim, left_offset_frames, right_offset_frames,cut_id)
     return [print_line]
 
 if __name__ == '__main__':

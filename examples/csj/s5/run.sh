@@ -40,7 +40,7 @@ resume=
 lm_resume=
 
 ### path to save preproecssed data
-export data=/n/work2/inaguma/corpus/csj
+data=/home/yyu/Repos/neural_sp_yang/examples/csj/s5/data_ori
 
 ### path to original data
 CSJDATATOP=/n/rd25/mimura/corpus/CSJ  ## CSJ database top directory.
@@ -108,9 +108,9 @@ if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ] && [ ! -e ${data}/.done_stage_0
 
     mkdir -p ${data}
     local/csj_make_trans/csj_autorun.sh ${CSJDATATOP} ${data}/csj-data ${CSJVER} || exit 1;
-    local/csj_data_prep.sh ${data}/csj-data ${datasize} || exit 1;
+    local/csj_data_prep.sh ${data}/csj-data  ${data} ${datasize} || exit 1;
     for x in eval1 eval2 eval3; do
-        local/csj_eval_data_prep.sh ${data}/csj-data/eval ${x} || exit 1;
+        local/csj_eval_data_prep.sh ${data}/csj-data/eval ${data} ${x} || exit 1;
     done
 
     # Remove <sp> and POS tag, and lowercase
