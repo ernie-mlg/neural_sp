@@ -25,9 +25,9 @@ CONDA=$(TOOL)/miniconda
 
 .PHONY: all clean
 
-all: miniconda.done kaldi.done python
-python: neural_sp.done warp-transducer.done sentencepiece.done
-extra: warp_rnnt.done nkf.done moses.done mwerSegmenter.done
+all: miniconda.done kaldi.done python extra
+python: neural_sp.done warp-transducer.done sentencepiece.done lhotse.done
+extra: nkf.done moses.done mwerSegmenter.done
 
 # miniconda
 miniconda.done:
@@ -94,6 +94,11 @@ warp-transducer.done:
 	. $(CONDA)/bin/activate; cd $(TOOL)/warp-transducer && mkdir build && cd build && cmake .. && $(MAKE); true
 	. $(CONDA)/bin/activate; cd $(TOOL)/warp-transducer/pytorch_binding && python setup.py install
 	touch warp-transducer.done
+
+lhotse.done:
+	git clone https://github.com/lhotse-speech/lhotse.git $(TOOL)/lhotse
+	. $(CONDA)/bin/activate; cd $(TOOL)/lhotse; pip install -e '.[dev]'
+
 
 warp_rnnt.done:
 	. $(CONDA)/bin/activate; pip install warp_rnnt==0.3  # GPU only
