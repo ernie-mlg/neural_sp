@@ -16,7 +16,6 @@ from neural_sp.models.modules.positional_embedding import (
     PositionalEncoding,
     XLPositionalEmbedding
 )
-from neural_sp.models.modules.positionwise_feed_forward import PositionwiseFeedForward as FFN
 from neural_sp.models.seq2seq.encoders.conv import ConvEncoder
 from neural_sp.models.seq2seq.encoders.encoder_base import EncoderBase
 from neural_sp.models.seq2seq.encoders.subsampling import (
@@ -112,16 +111,18 @@ class TransformerEncoder(EncoderBase):
             raise ValueError('subsample must be the same size as n_layers. n_layers: %d, subsample: %s' %
                              (n_layers, subsamples))
         if n_layers_sub1 < 0 or (n_layers_sub1 > 1 and n_layers < n_layers_sub1):
-            raise ValueError('Set n_layers_sub1 between 1 to n_layers.')
+            raise Warning('Set n_layers_sub1 between 1 to n_layers. n_layers: %d, n_layers_sub1: %d' %
+                          (n_layers, n_layers_sub1))
         if n_layers_sub2 < 0 or (n_layers_sub2 > 1 and n_layers_sub1 < n_layers_sub2):
-            raise ValueError('Set n_layers_sub2 between 1 to n_layers_sub1.')
+            raise Warning('Set n_layers_sub2 between 1 to n_layers_sub1. n_layers_sub1: %d, n_layers_sub2: %d' %
+                          (n_layers_sub1, n_layers_sub2))
 
+        self.enc_type = enc_type
         self.d_model = d_model
         self.n_layers = n_layers
         self.n_heads = n_heads
         self.pe_type = pe_type
         self.scale = math.sqrt(d_model)
-        self.unidir = 'uni' in enc_type
 
         # for compatibility
         chunk_size_left = str(chunk_size_left)
@@ -129,16 +130,40 @@ class TransformerEncoder(EncoderBase):
         chunk_size_right = str(chunk_size_right)
 
         # for streaming encoder
+        self.unidir = 'uni' in enc_type
         self.lookaheads = lookaheads
         if sum(lookaheads) > 0:
             assert self.unidir
         self.chunk_size_left = int(chunk_size_left.split('_')[-1]) // n_stacks
         self.chunk_size_current = int(chunk_size_current.split('_')[-1]) // n_stacks
         self.chunk_size_right = int(chunk_size_right.split('_')[-1]) // n_stacks
-        self.lc_bidir = self.chunk_size_left > 0 or self.chunk_size_current > 0 or self.chunk_size_right > 0
-        self.streaming_type = streaming_type
-        # reshape) not lookahead frames in CNN layers, but requires some additional computations
-        # mask) there are some lookahead frames in CNN layers, no additional computations
+        self.lc_bidir = self.chunk_size_current > 0 and enc_type != 'conv' and 'uni' not in enc_type
+        self.cnn_lookahead = self.unidir or enc_type == 'conv'
+        self.streaming_type = streaming_type if self.lc_bidir else ''
+        # -: past context
+        # *: current context
+        # +: future context
+        # reshape) overlapped windowing. additional redundant computation is introduced.
+        # During inference, caching is not applied. However, considering (N_l+N_c+N_r) is very short
+        # and independent on layer depth, the overhead is negligible.
+        # chunk1: |**|++
+        # chunk2:  --|**|++
+        # chunk3:     --|**|++
+        # chunk4:        --|**|++
+        # chunk5:           --|**|++
+        # mask) chunkwise masking. future context is restricted within the current chunk
+        # to avoid accumuration of future context depending on the layer depth.
+        # chunk1: |**|
+        # chunk2:  --|**|
+        # chunk3:  -- --|**|
+        # chunk4:     -- --|**|
+        # chunk5:        -- --|**|
+        if self.unidir:
+            assert self.chunk_size_left == self.chunk_size_current == self.chunk_size_right == 0
+        if self.streaming_type == 'mask':
+            assert self.chunk_size_right == 0
+            assert self.chunk_size_left == self.chunk_size_current
+            # NOTE: this is important to cache CNN output at each chunk
         if self.lc_bidir:
             assert n_layers_sub1 == 0
             assert n_layers_sub2 == 0
@@ -211,23 +236,22 @@ class TransformerEncoder(EncoderBase):
         if self.chunk_size_right > 0:
             assert self.chunk_size_right % self._factor == 0
 
-        self.clamp_len = clamp_len
+        self.pos_enc, self.pos_emb = None, None
         self.u_bias, self.v_bias = None, None
-        self.pos_emb = None
-        if pe_type == 'relative_xl':
+        if pe_type in ['relative', 'relative_xl']:
             self.pos_emb = XLPositionalEmbedding(d_model, dropout)
-            self.u_bias = nn.Parameter(torch.Tensor(n_heads, d_model // n_heads))
-            self.v_bias = nn.Parameter(torch.Tensor(n_heads, d_model // n_heads))
-            # NOTE: u_bias and v_bias are global parameters
-        elif pe_type == 'relative':
-            self.pos_emb = XLPositionalEmbedding(d_model, dropout)
+            if pe_type == 'relative_xl':
+                self.u_bias = nn.Parameter(torch.Tensor(n_heads, d_model // n_heads))
+                self.v_bias = nn.Parameter(torch.Tensor(n_heads, d_model // n_heads))
+                # NOTE: u_bias and v_bias are global parameters shared in the whole model
         else:
             self.pos_enc = PositionalEncoding(d_model, dropout_in, pe_type, param_init)
 
         self.layers = nn.ModuleList([copy.deepcopy(TransformerEncoderBlock(
-            d_model, d_ff, n_heads, dropout, dropout_att, dropout_layer,
-            layer_norm_eps, ffn_activation, param_init, pe_type,
-            ffn_bottleneck_dim))
+            d_model, d_ff, n_heads,
+            dropout, dropout_att, dropout_layer,
+            layer_norm_eps, ffn_activation, param_init,
+            pe_type, clamp_len, ffn_bottleneck_dim))
             for _ in range(n_layers)])
         self.norm_out = nn.LayerNorm(d_model, eps=layer_norm_eps)
         self._odim = d_model
@@ -237,8 +261,8 @@ class TransformerEncoder(EncoderBase):
                 self.layer_sub1 = TransformerEncoderBlock(
                     d_model, d_ff, n_heads,
                     dropout, dropout_att, dropout_layer,
-                    layer_norm_eps, ffn_activation, param_init, pe_type,
-                    ffn_bottleneck_dim)
+                    layer_norm_eps, ffn_activation, param_init,
+                    pe_type, clamp_len, ffn_bottleneck_dim)
             odim_sub1 = d_model
             if last_proj_dim > 0 and last_proj_dim != self.output_dim:
                 self.bridge_sub1 = nn.Linear(self._odim, last_proj_dim)
@@ -253,8 +277,8 @@ class TransformerEncoder(EncoderBase):
                 self.layer_sub2 = TransformerEncoderBlock(
                     d_model, d_ff, n_heads,
                     dropout, dropout_att, dropout_layer,
-                    layer_norm_eps, ffn_activation, param_init, pe_type,
-                    ffn_bottleneck_dim)
+                    layer_norm_eps, ffn_activation, param_init,
+                    pe_type, clamp_len, ffn_bottleneck_dim)
             odim_sub2 = d_model
             if last_proj_dim > 0 and last_proj_dim != self.output_dim:
                 self.bridge_sub2 = nn.Linear(self._odim, last_proj_dim)
@@ -269,6 +293,9 @@ class TransformerEncoder(EncoderBase):
             self._odim = last_proj_dim
 
         self.reset_parameters(param_init)
+
+        # for streaming inference
+        self.reset_cache()
 
     @staticmethod
     def add_args(parser, args):
@@ -364,6 +391,11 @@ class TransformerEncoder(EncoderBase):
                 nn.init.xavier_uniform_(self.u_bias)
                 nn.init.xavier_uniform_(self.v_bias)
 
+    def reset_cache(self):
+        self.frontend_cache = None  # TODO
+        self.cache = [None] * self.n_layers
+        logger.debug('Reset cache.')
+
     def forward(self, xs, xlens, task, streaming=False,
                 lookback=False, lookahead=False):
         """Forward pass.
@@ -385,63 +417,87 @@ class TransformerEncoder(EncoderBase):
                  'ys_sub1': {'xs': None, 'xlens': None},
                  'ys_sub2': {'xs': None, 'xlens': None}}
 
-        bs = xs.size(0)
+        bs, xmax = xs.size()[:2]
         n_chunks = 0
-        clamp_len = self.clamp_len
+        unidir = self.unidir
         lc_bidir = self.lc_bidir
-
-        # latency_controllable
         N_l, N_c, N_r = self.chunk_size_left, self.chunk_size_current, self.chunk_size_right
 
+        if streaming and self.streaming_type == 'mask':
+            assert xmax <= N_c
+        elif streaming and self.streaming_type == 'reshape':
+            assert xmax <= (N_l + N_c + N_r)
+
         if lc_bidir:
-            xs = chunkwise(xs, 0, N_c, 0)  # `[B * n_chunks, N_c, idim]`
+            if self.streaming_type == 'mask' and not streaming:
+                xs = chunkwise(xs, 0, N_c, 0, padding=True)  # `[B * n_chunks, N_c, idim]`
+                # NOTE: CNN consumes inputs in the current chunk to avoid extra lookahead latency
+                # That is, CNN outputs are independent on chunk boundary
+            elif self.streaming_type == 'reshape':
+                xs = chunkwise(xs, N_l, N_c, N_r, padding=not streaming)  # `[B * n_chunks, N_l+N_c+N_r, idim]`
             n_chunks = xs.size(0) // bs
+            assert bs * n_chunks == xs.size(0)
+            if streaming:
+                assert n_chunks == 1, xs.size()
 
         if self.conv is None:
             xs = self.embed(xs)
         else:
             # Path through CNN blocks
-            xs, xlens = self.conv(xs, xlens, lookback=lookback, lookahead=lookahead)
-            clamp_len = clamp_len // self.conv.subsampling_factor
-            if lc_bidir:
-                N_l = max(0, N_l // self.conv.subsampling_factor)
-                N_c = N_c // self.conv.subsampling_factor
-                N_r = N_r // self.conv.subsampling_factor
+            xs, xlens = self.conv(xs, xlens,
+                                  lookback=False if lc_bidir else lookback,
+                                  lookahead=False if lc_bidir else lookahead)
+            # NOTE: CNN lookahead surpassing a chunk is not allowed in chunkwise processing
+            N_l = max(0, N_l // self.conv.subsampling_factor)
+            N_c = N_c // self.conv.subsampling_factor
+            N_r = N_r // self.conv.subsampling_factor
 
         if lc_bidir:
-            if self.streaming_type == 'mask':
-                # Extract the center region
-                emax = xlens.max().item()
-                xs = xs.contiguous().view(bs, -1, xs.size(2))[:, :emax]  # `[B, emax, d_model]`
-            elif self.streaming_type == 'reshape':
-                xs = chunkwise(xs, N_l, N_c, N_r)  # `[B * n_chunks, N_l+N_c+N_r, idim]`
-                assert n_chunks == (xs.size(0) // bs)
+            # Do nothing in the streaming mode
+            if self.streaming_type == 'mask' and not streaming:
+                # back to the original shape (during training only)
+                xs = xs.contiguous().view(bs, -1, xs.size(2))[:, :xlens.max()]  # `[B, emax, d_model]`
+        elif streaming:
+            xs = xs[:, :xlens.max()]  # for unidirectional
 
+        if self.enc_type == 'conv':
+            eouts['ys']['xs'] = xs
+            eouts['ys']['xlens'] = xlens
+            return eouts
+
+        if not streaming:
+            self.reset_cache()
+        n_hist = self.cache[0]['input_san'].size(1) if streaming and self.cache[0] is not None else 0
+
+        # positional encoding
+        if self.pe_type in ['relative', 'relative_xl']:
+            xs = xs * self.scale  # NOTE: first layer only
+            rel_pos_embs = self.pos_emb(xs, mlen=n_hist)
+        else:
+            xs = self.pos_enc(xs, scale=True, offset=max(0, n_hist))
+            rel_pos_embs = None
+
+        new_cache = [None] * self.n_layers
         if lc_bidir:
-            # streaming encoder
-            emax = xlens.max().item()
-
-            pos_embs = None
-            if self.pe_type in ['relative', 'relative_xl']:
-                xs = xs * self.scale  # NOTE: first layer only
-                pos_embs = self.pos_emb(xs, zero_center_offset=True)  # NOTE: no clamp_len for streaming
-            else:
-                xs = self.pos_enc(xs, scale=True)
-
+            # chunkwise streaming encoder
             if self.streaming_type == 'reshape':
-                xx_mask_first = None
                 xx_mask = None  # NOTE: no mask to avoid masking all frames in a chunk
             elif self.streaming_type == 'mask':
-                xx_mask_first, xx_mask = make_time_restricted_san_mask(xs, xlens, N_l, N_c, N_r, n_chunks)
+                if streaming:
+                    n_chunks = math.ceil((xlens.max().item() + n_hist) / N_c)
+                xx_mask = make_chunkwise_san_mask(xs, xlens + n_hist, N_l, N_c, n_chunks)
 
             for lth, layer in enumerate(self.layers):
-                xs = layer(xs, xx_mask if lth >= 1 else xx_mask_first,
-                           pos_embs=pos_embs, u_bias=self.u_bias, v_bias=self.v_bias)
-                if not self.training:
+                xs, cache = layer(xs, xx_mask, cache=self.cache[lth],
+                                  pos_embs=rel_pos_embs, u_bias=self.u_bias, v_bias=self.v_bias)
+                if self.streaming_type == 'mask':
+                    new_cache[lth] = cache
+                if not self.training and not streaming:
                     if self.streaming_type == 'reshape':
                         n_heads = layer.xx_aws.size(1)
                         xx_aws = layer.xx_aws[:, :, N_l:N_l + N_c, N_l:N_l + N_c]
                         xx_aws = xx_aws.view(bs, n_chunks, n_heads, N_c, N_c)
+                        emax = xlens.max().item()
                         xx_aws_center = xx_aws.new_zeros(bs, n_heads, emax, emax)
                         for chunk_idx in range(n_chunks):
                             offset = chunk_idx * N_c
@@ -455,62 +511,59 @@ class TransformerEncoder(EncoderBase):
 
                 if self.subsample is not None:
                     xs, xlens = self.subsample[lth](xs, xlens)
-                    emax = xlens.max().item()
                     N_l = max(0, N_l // self.subsample[lth].factor)
                     N_c = N_c // self.subsample[lth].factor
                     N_r = N_r // self.subsample[lth].factor
                     if self.pe_type in ['relative', 'relative_xl']:
-                        # Create sinusoidal positional embeddings for relative positional encoding
-                        pos_embs = self.pos_emb(xs, zero_center_offset=True)  # NOTE: no clamp_len for streaming
+                        rel_pos_embs = self.pos_emb(xs)
                     if self.streaming_type == 'mask':
-                        _, xx_mask = make_time_restricted_san_mask(xs, xlens, N_l, N_c, N_r, n_chunks)
+                        xx_mask = make_chunkwise_san_mask(xs, xlens, N_l, N_c, n_chunks)
 
             # Extract the center region
             if self.streaming_type == 'reshape':
                 xs = xs[:, N_l:N_l + N_c]  # `[B * n_chunks, N_c, d_model]`
                 xs = xs.contiguous().view(bs, -1, xs.size(2))
-                xs = xs[:, :emax]
+                xs = xs[:, :xlens.max()]
 
         else:
-            if self.pe_type in ['relative', 'relative_xl']:
-                xs = xs * self.scale  # NOTE: first layer only
-                # Create sinusoidal positional embeddings for relative positional encoding
-                pos_embs = self.pos_emb(xs, clamp_len=clamp_len, zero_center_offset=True)
-            else:
-                xs = self.pos_enc(xs, scale=True)
-                pos_embs = None
-
-            xx_mask = make_san_mask(xs, xlens, self.unidir, self.lookaheads[0])
+            xx_mask = make_san_mask(xs, xlens + n_hist, unidir, self.lookaheads[0])
             for lth, layer in enumerate(self.layers):
-                xs = layer(xs, xx_mask, pos_embs=pos_embs, u_bias=self.u_bias, v_bias=self.v_bias)
-                if not self.training:
+                xs, cache = layer(xs, xx_mask, cache=self.cache[lth],
+                                  pos_embs=rel_pos_embs, u_bias=self.u_bias, v_bias=self.v_bias)
+                new_cache[lth] = cache
+                if not self.training and not streaming:
                     self.aws_dict['xx_aws_layer%d' % lth] = tensor2np(layer.xx_aws)
                     self.data_dict['elens%d' % lth] = tensor2np(xlens)
 
                 # Pick up outputs in the sub task before the projection layer
                 if lth == self.n_layers_sub1 - 1:
-                    xs_sub1 = self.sub_module(xs, xx_mask, lth, pos_embs, 'sub1')
+                    xs_sub1 = self.sub_module(xs, xx_mask, lth, rel_pos_embs, 'sub1')
+                    xlens_sub1 = xlens.clone()
                     if task == 'ys_sub1':
-                        eouts[task]['xs'], eouts[task]['xlens'] = xs_sub1, xlens
+                        eouts[task]['xs'], eouts[task]['xlens'] = xs_sub1, xlens_sub1
                         return eouts
                 if lth == self.n_layers_sub2 - 1:
-                    xs_sub2 = self.sub_module(xs, xx_mask, lth, pos_embs, 'sub2')
+                    xs_sub2 = self.sub_module(xs, xx_mask, lth, rel_pos_embs, 'sub2')
+                    xlens_sub2 = xlens.clone()
                     if task == 'ys_sub2':
-                        eouts[task]['xs'], eouts[task]['xlens'] = xs_sub2, xlens
+                        eouts[task]['xs'], eouts[task]['xlens'] = xs_sub2, xlens_sub2
                         return eouts
 
                 if lth < len(self.layers) - 1:
                     if self.subsample is not None and self.subsample[lth].factor > 1:
                         xs, xlens = self.subsample[lth](xs, xlens)
-                        xx_mask = make_san_mask(xs, xlens, self.unidir, self.lookaheads[lth + 1])
+                        n_hist = self.cache[lth + 1]['input_san'].size(
+                            1) if streaming and self.cache[lth + 1] is not None else 0
                         if self.pe_type in ['relative', 'relative_xl']:
-                            # Create sinusoidal positional embeddings for relative positional encoding
-                            clamp_len = clamp_len // self.subsample[lth].factor
-                            pos_embs = self.pos_emb(xs, clamp_len=clamp_len, zero_center_offset=True)
+                            rel_pos_embs = self.pos_emb(xs, mlen=n_hist)
+                        xx_mask = make_san_mask(xs, xlens + n_hist, unidir, self.lookaheads[lth + 1])
                     elif self.lookaheads[lth] != self.lookaheads[lth + 1]:
-                        xx_mask = make_san_mask(xs, xlens, self.unidir, self.lookaheads[lth + 1])
+                        xx_mask = make_san_mask(xs, xlens + n_hist, unidir, self.lookaheads[lth + 1])
 
         xs = self.norm_out(xs)
+
+        if streaming:
+            self.cache = new_cache
 
         # Bridge layer
         if self.bridge is not None:
@@ -519,14 +572,14 @@ class TransformerEncoder(EncoderBase):
         if task in ['all', 'ys']:
             eouts['ys']['xs'], eouts['ys']['xlens'] = xs, xlens
         if self.n_layers_sub1 >= 1 and task == 'all':
-            eouts['ys_sub1']['xs'], eouts['ys_sub1']['xlens'] = xs_sub1, xlens
+            eouts['ys_sub1']['xs'], eouts['ys_sub1']['xlens'] = xs_sub1, xlens_sub1
         if self.n_layers_sub2 >= 1 and task == 'all':
-            eouts['ys_sub2']['xs'], eouts['ys_sub2']['xlens'] = xs_sub2, xlens
+            eouts['ys_sub2']['xs'], eouts['ys_sub2']['xlens'] = xs_sub2, xlens_sub2
         return eouts
 
     def sub_module(self, xs, xx_mask, lth, pos_embs=None, module='sub1'):
         if self.task_specific_layer:
-            xs_sub = getattr(self, 'layer_' + module)(xs, xx_mask, pos_embs=pos_embs)
+            xs_sub, cache = getattr(self, 'layer_' + module)(xs, xx_mask, pos_embs=pos_embs)
         else:
             xs_sub = xs.clone()
         if getattr(self, 'bridge_' + module) is not None:
@@ -551,7 +604,7 @@ def make_san_mask(xs, xlens, unidirectional=False, lookahead=0):
 
     """
     xx_mask = make_pad_mask(xlens.to(xs.device))
-    xx_mask = xx_mask.unsqueeze(1).repeat([1, xs.size(1), 1])  # `[B, emax (query), emax (key)]`
+    xx_mask = xx_mask.unsqueeze(1).repeat([1, xlens.max(), 1])  # `[B, emax (query), emax (key)]`
     if unidirectional:
         xx_mask = causal(xx_mask, lookahead)
     return xx_mask
@@ -575,28 +628,22 @@ def causal(xx_mask, lookahead):
     return xx_mask
 
 
-def make_time_restricted_san_mask(xs, xlens, N_l, N_c, N_r, n_chunks):
-    """Mask self-attention mask.
+def make_chunkwise_san_mask(xs, xlens, N_l, N_c, n_chunks):
+    """Mask self-attention mask for chunkwise processing.
 
     Args:
         xs (FloatTensor): `[B, T, d_model]`
         xlens (InteTensor): `[B]` (on CPU)
         N_l (int): number of frames for left context
         N_c (int): number of frames for current context
-        N_r (int): number of frames for right context
         n_chunks (int): number of chunks
     Returns:
         xx_mask (ByteTensor): `[B, T (query), T (key)]`
 
     """
     xx_mask = make_san_mask(xs, xlens)
-    xx_mask_first = xx_mask.clone()
     for chunk_idx in range(n_chunks):
         offset = chunk_idx * N_c
-        # for first layer
-        xx_mask_first[:, offset:offset + N_c, :max(0, offset - N_l)] = 0
-        xx_mask_first[:, offset:offset + N_c, offset + (N_c + N_r):] = 0
-        # for upper layers
         xx_mask[:, offset:offset + N_c, :max(0, offset - N_l)] = 0
         xx_mask[:, offset:offset + N_c, offset + N_c:] = 0
-    return xx_mask_first, xx_mask
+    return xx_mask

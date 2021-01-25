@@ -40,8 +40,9 @@ def make_args(**kwargs):
         bidir_sum_fwd_bwd=False,
         task_specific_layer=False,
         param_init=0.1,
-        chunk_size_left="0",
+        chunk_size_current="0",
         chunk_size_right="0",
+        cnn_lookahead=True,
         rsp_prob=0,
     )
     args.update(kwargs)
@@ -113,49 +114,49 @@ def make_args(**kwargs):
         ({'enc_type': 'blstm', 'subsample': "1_2_2_1", 'subsample_type': 'add',
           'n_projs': 8}),
         # LC-BLSTM
-        ({'enc_type': 'blstm', 'chunk_size_left': "0", 'chunk_size_right': "40"}),  # BLSTM for PT
-        ({'enc_type': 'blstm', 'chunk_size_left': "40", 'chunk_size_right': "40"}),
+        ({'enc_type': 'blstm', 'chunk_size_current': "0", 'chunk_size_right': "40"}),  # BLSTM for PT
+        ({'enc_type': 'blstm', 'chunk_size_current': "40", 'chunk_size_right': "40"}),
         ({'enc_type': 'blstm', 'bidir_sum_fwd_bwd': True,
-          'chunk_size_left': "0", 'chunk_size_right': "40"}),  # BLSTM for PT
+          'chunk_size_current': "0", 'chunk_size_right': "40"}),  # BLSTM for PT
         ({'enc_type': 'blstm', 'bidir_sum_fwd_bwd': True,
-          'chunk_size_left': "40", 'chunk_size_right': "40"}),
+          'chunk_size_current': "40", 'chunk_size_right': "40"}),
         ({'enc_type': 'conv_blstm', 'bidir_sum_fwd_bwd': True,
-          'chunk_size_left': "40", 'chunk_size_right': "40"}),
+          'chunk_size_current': "40", 'chunk_size_right': "40"}),
         ({'enc_type': 'conv_blstm', 'bidir_sum_fwd_bwd': True,
-          'chunk_size_left': "40", 'chunk_size_right': "40", 'rsp_prob': 0.5}),
+          'chunk_size_current': "40", 'chunk_size_right': "40", 'rsp_prob': 0.5}),
         # LC-BLSTM + subsampling
         ({'enc_type': 'blstm', 'subsample': "1_2_1_1",
           'chunk_size_right': "40"}),  # BLSTM for PT
         ({'enc_type': 'blstm', 'subsample': "1_2_1_1",
-          'chunk_size_left': "40", 'chunk_size_right': "40"}),
+          'chunk_size_current': "40", 'chunk_size_right': "40"}),
         ({'enc_type': 'blstm', 'subsample': "1_2_1_1", 'bidir_sum_fwd_bwd': True,
           'chunk_size_right': "40"}),  # BLSTM for PT
         ({'enc_type': 'blstm', 'subsample': "1_2_1_1", 'bidir_sum_fwd_bwd': True,
-          'chunk_size_left': "40", 'chunk_size_right': "40"}),
+          'chunk_size_current': "40", 'chunk_size_right': "40"}),
         ({'enc_type': 'blstm', 'subsample': "1_2_1_1", 'bidir_sum_fwd_bwd': True,
-          'chunk_size_left': "40", 'chunk_size_right': "40", 'rsp_prob': 0.5}),
+          'chunk_size_current': "40", 'chunk_size_right': "40", 'rsp_prob': 0.5}),
         # Multi-task
         ({'enc_type': 'blstm', 'n_layers_sub1': 2}),
         ({'enc_type': 'blstm', 'n_layers_sub1': 2, 'task_specific_layer': True}),
         ({'enc_type': 'blstm', 'n_layers_sub1': 2, 'task_specific_layer': True,
-          'chunk_size_left': "0", 'chunk_size_right': "40"}),  # BLSTM for PT
+          'chunk_size_current': "0", 'chunk_size_right': "40"}),  # BLSTM for PT
         ({'enc_type': 'blstm', 'n_layers_sub1': 2, 'task_specific_layer': True,
-          'chunk_size_left': "40", 'chunk_size_right': "40"}),  # LC-BLSTM
+          'chunk_size_current': "40", 'chunk_size_right': "40"}),  # LC-BLSTM
         ({'enc_type': 'blstm', 'n_layers_sub1': 2, 'task_specific_layer': True,
-          'chunk_size_left': "0", 'chunk_size_right': "40",
+          'chunk_size_current': "0", 'chunk_size_right': "40",
           'rsp_prob': 0.5}),  # BLSTM for PT
         ({'enc_type': 'blstm', 'n_layers_sub1': 2, 'task_specific_layer': True,
-          'chunk_size_left': "40", 'chunk_size_right': "40",
+          'chunk_size_current': "40", 'chunk_size_right': "40",
           'rsp_prob': 0.5}),  # LC-BLSTM
         ({'enc_type': 'blstm', 'n_layers_sub1': 2, 'n_layers_sub2': 1}),
         ({'enc_type': 'blstm', 'n_layers_sub1': 2, 'n_layers_sub2': 1,
           'task_specific_layer': True}),
         # Multi-task + subsampling
         ({'enc_type': 'blstm', 'subsample': "2_1_1_1", 'n_layers_sub1': 2,
-          'chunk_size_left': "0", 'chunk_size_right': "40",
+          'chunk_size_current': "0", 'chunk_size_right': "40",
           'task_specific_layer': True}),  # BLSTM for PT
         ({'enc_type': 'blstm', 'subsample': "2_1_1_1", 'n_layers_sub1': 2,
-          'chunk_size_left': "40", 'chunk_size_right': "40",
+          'chunk_size_current': "40", 'chunk_size_right': "40",
           'task_specific_layer': True}),  # LC-BLSTM
     ]
 )
@@ -163,12 +164,11 @@ def test_forward(args):
     args = make_args(**args)
 
     batch_size = 4
-    xmaxs = [40, 45] if int(args['chunk_size_left'].split('_')[0]) == -1 else [400, 455]
+    xmaxs = [40, 45] if int(args['chunk_size_current'].split('_')[0]) == -1 else [400, 455]
     device = "cpu"
 
     module = importlib.import_module('neural_sp.models.seq2seq.encoders.rnn')
-    enc = module.RNNEncoder(**args)
-    enc = enc.to(device)
+    enc = module.RNNEncoder(**args).to(device)
 
     for xmax in xmaxs:
         xs = np.random.randn(batch_size, xmax, args['input_dim']).astype(np.float32)

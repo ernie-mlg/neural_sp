@@ -10,33 +10,45 @@ import torch
 class Streaming(object):
     """Streaming encoding interface."""
 
-    def __init__(self, x_whole, params, encoder, block_size, idx2token=None):
+    def __init__(self, x_whole, params, encoder, idx2token=None):
         """
         Args:
             x_whole (FloatTensor): `[T, input_dim]`
-            params ():
+            params (dict): decoding hyperparameters
             encoder (torch.nn.module): encoder module
-            block_size (int): block size for streaming inference
-            idx2token ():
+            idx2token (): converter from index to token
 
         """
         super(Streaming, self).__init__()
 
         self.x_whole = x_whole
+        self.xmax_whole = len(x_whole)
         # TODO: implement wav input
-        self.encoder = encoder
-        if self.encoder.conv is not None:
-            self.encoder.turn_off_ceil_mode(self.encoder)
+        self.input_dim = x_whole.shape[1]
+        self.enc_type = encoder.enc_type
         self.idx2token = idx2token
 
-        # latency
+        if self.enc_type in ['lstm', 'conv_lstm', 'conv_uni_transformer',
+                             'conv_uni_conformer', 'conv_uni_conformer_v2']:
+            self.streaming_type = 'unidir'
+        elif 'lstm' in self.enc_type or 'gru' in self.enc_type:
+            self.streaming_type = 'lc_bidir'
+        else:
+            assert hasattr(encoder, 'streaming_type')
+            self.streaming_type = getattr(encoder, 'streaming_type', '')  # for LC-Transformer/Conformer
+
+        # latency related
         self._factor = encoder.subsampling_factor
-        self.N_l = encoder.chunk_size_left
-        self.N_c = getattr(encoder, 'chunk_size_current', 0)  # for Transformer
+        self.N_l = getattr(encoder, 'chunk_size_left', 0)  # for LC-Transformer/Conformer
+        self.N_c = encoder.chunk_size_current
         self.N_r = encoder.chunk_size_right
-        if self.N_l <= 0 and self.N_r <= 0:
-            self.N_l = block_size  # for unidirectional encoder
-            assert block_size % self._factor == 0
+        if self.streaming_type == 'mask':
+            self.N_l = 0
+            # NOTE: context in previous chunks are cached inside the encoder
+        if self.N_c <= 0 and self.N_r <= 0:
+            self.N_c = params['recog_block_sync_size']  # for unidirectional encoder
+            assert self.N_c % self._factor == 0
+        # NOTE: these lengths are the ones before subsampling
 
         # threshold for CTC-VAD
         self.blank_id = 0
@@ -53,8 +65,12 @@ class Streaming(object):
         self._n_accum_frames = 0
         self._bd_offset = -1  # boudnary offset in each block (AFTER subsampling)
 
-        # for CNN
-        self.conv_n_lookahead = encoder.conv.context_size if encoder.conv is not None else 0
+        # for CNN frontend
+        self.conv_context = encoder.conv.context_size if encoder.conv is not None else 0
+        if not getattr(encoder, 'cnn_lookahead', True):
+            self.conv_context = 0
+            # NOTE: CNN lookahead surpassing a block is not allowed in LC-Transformer/Conformer.
+            # Unidirectional Transformer/Conformer can use lookahead in frontend CNN.
 
         # for test
         self._eout_blocks = []
@@ -93,36 +109,56 @@ class Streaming(object):
         return torch.cat(self._eout_blocks, dim=1)
 
     def next_block(self):
-        self._offset += self.N_l
+        self._offset += self.N_c
 
     def extract_feature(self):
+        """Slice acoustic features.
+
+        Returns:
+            x_block (np.array): `[T_block, input_dim]`
+            is_last_block (bool): flag for the last input block
+            cnn_lookback (bool): use lookback frames in CNN
+            cnn_lookahead (bool): use lookahead frames in CNN
+            xlen_block (int): input length of the cernter region in a block (for the last block)
+
+        """
         j = self._offset
-        N_l = self.N_l
-        N_r = self.N_r
+        N_l, N_c, N_r = self.N_l, self.N_c, self.N_r
 
         # Encode input features block by block
-        if getattr(self.encoder, 'conv', None) is not None:
-            cnn_context = self.encoder.conv.context_size
-            x_block = self.x_whole[max(0, j - cnn_context):j + (N_l + N_r) + cnn_context]
+        start = j - (self.conv_context + N_l)
+        end = j + (N_c + N_r + self.conv_context)
+        x_block = self.x_whole[max(0, start):end]
+
+        is_last_block = (j + N_c) >= self.xmax_whole
+        cnn_lookback = self.streaming_type != 'reshape' and start >= 0
+        cnn_lookahead = self.streaming_type != 'reshape' and end < self.xmax_whole
+        N_conv = self.conv_context if j == 0 or is_last_block else self.conv_context * 2
+        # TODO: implement frame stacking
+
+        if self.streaming_type in ['reshape', 'mask']:
+            xlen_block = min(self.xmax_whole - j, N_c)
+        elif self.streaming_type == 'lc_bidir':
+            xlen_block = min(self.xmax_whole - j + N_conv, N_c + N_conv)
         else:
-            cnn_context = 0
-            x_block = self.x_whole[j:j + (N_l + N_r)]
+            xlen_block = len(x_block)
 
-        # zero paddign for the last block
-        if j > 0 and x_block.shape[0] != (N_l + N_r + cnn_context * 2):
-            zero_pad = np.zeros(((N_l + N_r + cnn_context * 2) - x_block.shape[0], x_block.shape[1])).astype(np.float32)
-            x_block = np.concatenate([x_block, zero_pad], axis=0)
+        if self.streaming_type == 'reshape':
+            # zero padding for the first blocks
+            if start < 0:
+                zero_pad = np.zeros((-start, self.input_dim)).astype(np.float32)
+                x_block = np.concatenate([zero_pad, x_block], axis=0)
+            # zero padding for the last blocks
+            if len(x_block) < (N_l + N_c + N_r):
+                zero_pad = np.zeros(((N_l + N_c + N_r) - len(x_block), self.input_dim)).astype(np.float32)
+                x_block = np.concatenate([x_block, zero_pad], axis=0)
 
-        is_last_block = (j + N_l - 1) >= len(self.x_whole) - 1
         self._bd_offset = -1  # reset
-        self._n_accum_frames += min(self.N_l, x_block.shape[1])
+        self._n_accum_frames += min(self.N_c, xlen_block)
 
-        start = j - self.conv_n_lookahead
-        end = j + (N_l + N_r) + self.conv_n_lookahead
-        lookback = start >= 0
-        lookahead = end <= self.x_whole.shape[0] - 1
+        xlen_block = max(xlen_block, self._factor)  # to avoid elen=0 after subsampling
 
-        return x_block, is_last_block, lookback, lookahead
+        return x_block, is_last_block, cnn_lookback, cnn_lookahead, xlen_block
 
     def ctc_vad(self, ctc_probs_block, stdout=False):
         """Voice activity detection with CTC posterior probabilities.
@@ -189,12 +225,12 @@ class Streaming(object):
         return is_reset
 
     def backoff(self, x_block, decoder, stdout=False):
-        if 0 <= self._bd_offset * self._factor < self.N_l - 1:
+        if 0 <= self._bd_offset * self._factor < self.N_c - 1:
             # boundary located in the middle of the current block
             decoder.n_frames = 0
             offset_prev = self._offset
-            self._offset = self._offset - x_block[(self._bd_offset + 1) * self._factor:self.N_l].shape[0]
+            self._offset = self._offset - x_block[(self._bd_offset + 1) * self._factor:self.N_c].shape[0]
             if stdout:
                 print('Back %d frames (%d -> %d)' %
-                      (x_block[(self._bd_offset + 1) * self._factor:self.N_l].shape[0],
+                      (x_block[(self._bd_offset + 1) * self._factor:self.N_c].shape[0],
                        offset_prev, self._offset))

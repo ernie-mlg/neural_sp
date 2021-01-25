@@ -9,6 +9,7 @@ import torch.nn as nn
 
 from neural_sp.models.seq2seq.encoders.conv import ConvEncoder
 from neural_sp.models.seq2seq.encoders.conformer_block import ConformerEncoderBlock
+from neural_sp.models.seq2seq.encoders.conformer_block_v2 import ConformerEncoderBlock_v2
 from neural_sp.models.seq2seq.encoders.transformer import TransformerEncoder
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ class ConformerEncoder(TransformerEncoder):
         enc_type (str): type of encoder
         n_heads (int): number of heads for multi-head attention
         kernel_size (int): kernel size for depthwise convolution in convolution module
+        normalization (str): normalization in convolution module
         n_layers (int): number of blocks
         n_layers_sub1 (int): number of layers in the 1st auxiliary task
         n_layers_sub2 (int): number of layers in the 2nd auxiliary task
@@ -61,7 +63,7 @@ class ConformerEncoder(TransformerEncoder):
 
     """
 
-    def __init__(self, input_dim, enc_type, n_heads, kernel_size,
+    def __init__(self, input_dim, enc_type, n_heads, kernel_size, normalization,
                  n_layers, n_layers_sub1, n_layers_sub2,
                  d_model, d_ff, ffn_bottleneck_dim, ffn_activation,
                  pe_type, layer_norm_eps, last_proj_dim,
@@ -84,25 +86,37 @@ class ConformerEncoder(TransformerEncoder):
             task_specific_layer, param_init, clamp_len,
             lookahead, chunk_size_left, chunk_size_current, chunk_size_right, streaming_type)
 
-        self.layers = nn.ModuleList([copy.deepcopy(ConformerEncoderBlock(
-            d_model, d_ff, n_heads, kernel_size, dropout, dropout_att, dropout_layer,
-            layer_norm_eps, ffn_activation, param_init, pe_type,
-            ffn_bottleneck_dim, self.unidir))
+        causal = self.unidir or (self.streaming_type == 'mask')
+        if 'conformer_v2' in enc_type:
+            conformer_block = ConformerEncoderBlock_v2
+        else:
+            assert pe_type in ['relative', 'relative_xl']
+            conformer_block = ConformerEncoderBlock
+
+        self.layers = nn.ModuleList([copy.deepcopy(conformer_block(
+            d_model, d_ff, n_heads, kernel_size,
+            dropout, dropout_att, dropout_layer,
+            layer_norm_eps, ffn_activation, param_init,
+            pe_type, clamp_len, ffn_bottleneck_dim, causal, normalization))
             for _ in range(n_layers)])
 
         if n_layers_sub1 > 0:
             if task_specific_layer:
-                self.layer_sub1 = ConformerEncoderBlock(
-                    d_model, d_ff, n_heads, kernel_size, dropout, dropout_att, dropout_layer,
-                    layer_norm_eps, ffn_activation, param_init, pe_type,
-                    ffn_bottleneck_dim, self.unidir)
+                self.layer_sub1 = conformer_block(
+                    d_model, d_ff, n_heads, kernel_size,
+                    dropout, dropout_att, dropout_layer,
+                    layer_norm_eps, ffn_activation, param_init,
+                    pe_type, clamp_len, ffn_bottleneck_dim, causal)
 
         if n_layers_sub2 > 0:
             if task_specific_layer:
-                self.layer_sub2 = ConformerEncoderBlock(
-                    d_model, d_ff, n_heads, kernel_size, dropout, dropout_att, dropout_layer,
-                    layer_norm_eps, ffn_activation, param_init, pe_type,
-                    ffn_bottleneck_dim, self.unidir)
+                self.layer_sub2 = conformer_block(
+                    d_model, d_ff, n_heads, kernel_size,
+                    dropout, dropout_att, dropout_layer,
+                    layer_norm_eps, ffn_activation, param_init,
+                    pe_type, clamp_len, ffn_bottleneck_dim, causal)
+
+        # NOTE: bridge layers are already defined in Transformer if they exist
 
         self.reset_parameters(param_init)
 
@@ -138,6 +152,9 @@ class ConformerEncoder(TransformerEncoder):
                            help='type of positional encoding for Conformer encoder')
         group.add_argument('--conformer_kernel_size', type=int, default=31,
                            help='kernel size for depthwise convolution in convolution module for Conformer encoder')
+        group.add_argument('--conformer_normalization', type=str, default='batch_norm',
+                           choices=['batch_norm', 'group_norm', 'layer_norm'],
+                           help='normalization in convolution module for Conformer encoder')
         group.add_argument('--dropout_enc_layer', type=float, default=0.0,
                            help='LayerDrop probability for Conformer encoder layers')
         group.add_argument('--transformer_enc_clamp_len', type=int, default=-1,
@@ -168,6 +185,7 @@ class ConformerEncoder(TransformerEncoder):
         dir_name += str(args.enc_n_layers) + 'L'
         dir_name += str(args.transformer_enc_n_heads) + 'H'
         dir_name += 'kernel' + str(args.conformer_kernel_size)
+        dir_name += '_' + args.conformer_normalization
         if args.transformer_enc_clamp_len > 0:
             dir_name += '_clamp' + str(args.transformer_enc_clamp_len)
         if args.dropout_enc_layer > 0:

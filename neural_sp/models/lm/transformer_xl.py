@@ -50,7 +50,6 @@ class TransformerXL(LMBase):
             self.mem_len = args.bptt
         if args.recog_mem_len > 0:
             self.mem_len = args.recog_mem_len
-        self.zero_center_offset = args.zero_center_offset
 
         self.vocab = args.vocab
         self.eos = 2
@@ -127,8 +126,6 @@ class TransformerXL(LMBase):
         # XL specific
         group.add_argument('--mem_len', type=int, default=0,
                            help='number of tokens for memory in TransformerXL during training')
-        group.add_argument('--zero_center_offset', type=strtobool, default=False,
-                           help='set the offset right after memory to zero (accept negaitve indices)')
         return parser
 
     @staticmethod
@@ -144,8 +141,6 @@ class TransformerXL(LMBase):
             dir_name += '_adaptiveSM'
         if args.mem_len > 0:
             dir_name += '_mem' + str(args.mem_len)
-        if args.zero_center_offset:
-            dir_name += '_zero_center'
         return dir_name
 
     def reset_parameters(self):
@@ -236,7 +231,7 @@ class TransformerXL(LMBase):
         else:
             out = self.dropout_emb(self.embed(ys.long()) * self.scale)
 
-        pos_embs = self.pos_emb(ys, mlen=mlen, zero_center_offset=self.zero_center_offset)
+        pos_embs = self.pos_emb(ys, mlen=mlen)
 
         new_mems = [None] * self.n_layers
         new_cache = [None] * self.n_layers

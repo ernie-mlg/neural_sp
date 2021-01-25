@@ -18,11 +18,12 @@ def make_args(**kwargs):
         enc_type='conv_conformer',
         n_heads=4,
         kernel_size=3,
+        normalization='batch_norm',
         n_layers=3,
         n_layers_sub1=0,
         n_layers_sub2=0,
-        d_model=16,
-        d_ff=64,
+        d_model=8,
+        d_ff=16,
         ffn_bottleneck_dim=0,
         ffn_activation='swish',
         pe_type='relative',
@@ -63,19 +64,25 @@ def make_args(**kwargs):
     [
         # Conformer type
         ({'enc_type': 'conformer'}),
+        ({'enc_type': 'conformer_v2'}),
         ({'enc_type': 'conv_conformer'}),
+        ({'enc_type': 'conv_conformer_v2'}),
         ({'input_dim': 240, 'conv_in_channel': 3}),
         # PE type
         ({'pe_type': 'relative_xl'}),
         ({'pe_type': 'relative', 'clamp_len': 10}),
         ({'pe_type': 'relative_xl', 'clamp_len': 10}),
-        # normalization
+        # normalization in frontend CNN
         ({'conv_batch_norm': True}),
         ({'conv_layer_norm': True}),
+        # normalization in Conformer convolution module
+        ({'normalization': 'group_norm'}),
+        ({'normalization': 'layer_norm'}),
         # projection
         ({'last_proj_dim': 10}),
         # unidirectional
         ({'enc_type': 'conv_uni_conformer'}),
+        ({'enc_type': 'conv_uni_conformer_v2'}),
         ({'enc_type': 'conv_uni_conformer', 'lookahead': "1_1_1"}),
         ({'enc_type': 'conv_uni_conformer', 'lookahead': "1_0_1"}),
         ({'enc_type': 'conv_uni_conformer', 'lookahead': "0_1_0"}),
@@ -85,9 +92,7 @@ def make_args(**kwargs):
         ({'streaming_type': 'reshape',
           'chunk_size_left': "64", 'chunk_size_current': "128", 'chunk_size_right': "64"}),
         ({'streaming_type': 'mask',
-          'chunk_size_left': "64", 'chunk_size_current': "64", 'chunk_size_right': "32"}),
-        ({'streaming_type': 'mask',
-          'chunk_size_left': "64", 'chunk_size_current': "128", 'chunk_size_right': "64"}),
+          'chunk_size_left': "64", 'chunk_size_current': "64"}),
         # Multi-task
         ({'n_layers_sub1': 2}),
         ({'n_layers_sub1': 2, 'n_layers_sub2': 1}),
@@ -107,18 +112,25 @@ def make_args(**kwargs):
         ({'subsample': "1_2_1", 'streaming_type': 'reshape',
           'chunk_size_left': "64", 'chunk_size_current': "64", 'chunk_size_right': "32"}),
         ({'subsample': "1_2_1", 'streaming_type': 'mask',
-          'chunk_size_left': "64", 'chunk_size_current': "64", 'chunk_size_right': "32"}),
+          'chunk_size_left': "64", 'chunk_size_current': "64"}),
         ({'subsample': "1_2_1", 'streaming_type': 'reshape',
           'conv_poolings': "(1,1)_(2,2)",
           'chunk_size_left': "64", 'chunk_size_current': "64", 'chunk_size_right': "32"}),
         ({'subsample': "1_2_1", 'streaming_type': 'mask',
-          'chunk_size_left': "64", 'chunk_size_current': "64", 'chunk_size_right': "32"}),
-        ({'subsample': "2_2_1", 'streaming_type': 'mask',
+          'conv_poolings': "(1,1)_(2,2)",
+          'chunk_size_left': "64", 'chunk_size_current': "64"}),
+        ({'subsample': "2_2_1", 'streaming_type': 'reshape',
           'conv_poolings': "(1,1)_(2,2)",
           'chunk_size_left': "64", 'chunk_size_current': "64", 'chunk_size_right': "32"}),
         ({'subsample': "2_2_1", 'streaming_type': 'mask',
+          'conv_poolings': "(1,1)_(2,2)",
+          'chunk_size_left': "64", 'chunk_size_current': "64"}),
+        ({'subsample': "2_2_1", 'streaming_type': 'reshape',
           'pe_type': "relative",
           'chunk_size_left': "64", 'chunk_size_current': "64", 'chunk_size_right': "32"}),
+        ({'subsample': "2_2_1", 'streaming_type': 'mask',
+          'pe_type': "relative",
+          'chunk_size_left': "64", 'chunk_size_current': "64"}),
     ]
 )
 def test_forward(args):

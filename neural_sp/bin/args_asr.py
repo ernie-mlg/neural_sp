@@ -1,6 +1,3 @@
-#! /usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 # Copyright 2018 Kyoto University (Hirofumi Inaguma)
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
 
@@ -16,6 +13,7 @@ ENCODER_TYPES = ['blstm', 'lstm', 'bgru', 'gru',
                  'conv_blstm', 'conv_lstm', 'conv_bgru', 'conv_gru',
                  'transformer', 'conv_transformer', 'conv_uni_transformer',
                  'conformer', 'conv_conformer', 'conv_uni_conformer',
+                 'conformer_v2', 'conv_conformer_v2', 'conv_uni_conformer_v2',
                  'tds', 'gated_conv']
 
 DECODER_TYPES = ['lstm', 'gru', 'transformer',
@@ -242,7 +240,7 @@ def build_parser():
     parser.add_argument('--dec_n_layers_sub2', type=int, default=0,
                         help='number of decoder RNN layers in the 2nd auxiliary task')
     parser.add_argument('--tie_embedding', type=strtobool, default=False, nargs='?',
-                        help='tie weights between an embedding matrix and a linear layer before the softmax layer')
+                        help='tie weights of an embedding matrix and a linear layer before the softmax layer')
     parser.add_argument('--ctc_fc_list', type=str, default="", nargs='?',
                         help='')
     parser.add_argument('--ctc_fc_list_sub1', type=str, default="", nargs='?',
@@ -285,6 +283,9 @@ def build_parser():
                         help='epoch to stop soring utterances by length')
     parser.add_argument('--sort_short2long', type=strtobool, default=True,
                         help='sort utterances in the ascending order')
+    parser.add_argument('--sort_by', type=str, default='input',
+                        choices=['input', 'output', 'shuffle', 'utt_id'],
+                        help='metric to sort utterances')
     parser.add_argument('--shuffle_bucket', type=strtobool, default=False,
                         help='gather the similar length of utterances and shuffle them')
     parser.add_argument('--eval_start_epoch', type=int, default=1,
@@ -372,7 +373,7 @@ def build_parser():
     # MBR
     parser.add_argument('--mbr_training', type=strtobool, default=False,
                         help='Minimum Bayes Risk (MBR) training')
-    parser.add_argument('--mbr_ce_weight', type=float, default=0.01,
+    parser.add_argument('--mbr_ce_weight', type=float, default=0.0,
                         help='MBR loss weight for the main task')
     parser.add_argument('--mbr_nbest', type=int, default=4,
                         help='N-best for MBR training')
