@@ -87,6 +87,7 @@ warp-ctc.done:
 warp-transducer.done:
 	if [ -e $(TOOL)/warp-transducer ]; then rm -rf $(TOOL)/warp-transducer; fi
 	git clone https://github.com/HawkAaron/warp-transducer.git $(TOOL)/warp-transducer
+	sed  -i 's/.*compute_30.*/#&/g' $(TOOL)/warp-transducer/CMakeLists.txt
 	# Note: Requires gcc>=5.0 to build extensions with pytorch>=1.0
 	if . $(CONDA)/bin/activate && python -c 'import torch as t;assert t.__version__[0] == "1"' &> /dev/null; then \
         . $(CONDA)/bin/activate && python -c "from distutils.version import LooseVersion as V;assert V('$(GCC_VERSION)') >= V('5.0'), 'Requires gcc>=5.0'"; \
