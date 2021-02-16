@@ -21,6 +21,8 @@ export CPATH=$CUDA_PATH/include:$CPATH  # for warp-rnnt
 cd tools
 make KALDI=/path/to/kaldi
 ```
+Building wrap-transducer will fail with cuda 11.0 so that you need comment-out 
+https://github.com/HawkAaron/warp-transducer/blob/f546575109111c455354861a0567c8aa794208a2/CMakeLists.txt#L48
 
 ## Key features
 ### Corpus
