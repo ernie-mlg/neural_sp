@@ -6,9 +6,9 @@
 ## How to install
 ```
 # Set path to CUDA, NCCL
-CUDAROOT=/usr/local/cuda
+CUDAROOT=/usr/local/cuda-10.1
 NCCL_ROOT=/usr/local/nccl
-NCCL_ROOT=/sw/hpc-sdk/Linux_x86_64/20.9/comm_libs/11.0/nccl/
+NCCL_ROOT=/disk107/code/sw/hpc-sdk/Linux_x86_64/20.9/comm_libs/11.0/nccl/
 
 export CPATH=$NCCL_ROOT/include:$CPATH
 export LD_LIBRARY_PATH=$NCCL_ROOT/lib/:$CUDAROOT/lib64:$LD_LIBRARY_PATH
